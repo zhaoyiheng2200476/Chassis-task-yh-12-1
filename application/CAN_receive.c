@@ -63,14 +63,7 @@ static uint8_t              M6001_can_send_data[8];
 //static uint8_t              Mi_can_receive_data[8];
 int motor2_errcnt=0;
 		
-
-
-
-		
-		
-		
-		
-		
+	
 		/**
   * @brief          hal CAN fifo call back, receive motor data
   * @param[in]      hcan, the point to CAN handle
@@ -369,7 +362,7 @@ float interpolate(float start, float end, float step) {
 //  * @param[in]      p6001: 6001电机角度, 范围 [+350，-350]
 //  * @retval         2023/10
 //  */
-float kp_position = 3.95;   // 位置环P参数3.35                           4                 
+float kp_position = 3.95;   // 位置环P参数3.95                           4                 
 float ki_position = 0.00002;  // 位置环I参数0.00002                0.00003
 float kd_position = 0.00002; // 位置环D参数0.000005            0.00001
 
@@ -377,18 +370,27 @@ float kp_speed = 0.1;       // 速度环P参数
 float ki_speed = 0;      // 速度环I参数
 float kd_speed = 0.00002;     // 速度环D参数
 
-// Variables for PID control
+ //Variables for PID control
 float position_integral = 0;
 float last_position_error = 0;
 float speed_integral = 0;
 float last_speed_error = 0;
 float pwm_Z = 550;//550
-float pwm_F = 64988;//64733
+float pwm_F = 64988;//64988
 
 int16_t last_set_angle = 0;// 添加变量用于存储上一次的 set_angle
 uint16_t pwm = 0;
 
-// Calculate PID control output
+///////过圈定义////
+int32_t roundTemp=0;
+int16_t lastFbAngle=0;
+int32_t trueAngle;
+uint8_t firstDetect=1;
+int16_t setAngleTemp;
+
+
+
+//// 输出控制定义
 float previous_set_angle = 0.0;  // 初始值设定为 0.0 或适当值
 float position_error;
 float speed_error;
@@ -396,83 +398,55 @@ float fb_seesee;
 float fb_seespeed;
 float use_set_angle;
 void CAN_send_m6001_position_pid(int16_t set_angle, int16_t fb_angle) {
-    // Calculate position error
+ 
+		//限制电机运动区间-300~+300
 
 	  // LiM6001t the set_angle to the range of -350 to 350 degrees
-    if (set_angle > 335) {
-        set_angle = 335;
-    } else if (set_angle < -335) {
-        set_angle = -335;
-    }	
-		
+ set_angle = (set_angle > 330) ? 330 : (set_angle < -330) ? -330 : set_angle;
 
-		if (set_angle - fb_angle < -180) {
-    fb_seesee = fb_angle - 360;
-} 
-else {
-    fb_seesee = fb_angle;
-}
+/*过圈计算*/// 计算修正后的角度，确保其与目标角度之差在-180到180度之间
+		if(lastFbAngle == 1)
+	{
+		lastFbAngle =0;
+		lastFbAngle = fb_angle;
+	}
+	
+	if(fb_angle - lastFbAngle > 180)
+		roundTemp --;
+	else if(fb_angle - lastFbAngle < -180)
+		roundTemp ++;
+	trueAngle = roundTemp*360+fb_angle;
+	
+	lastFbAngle = fb_angle;
 
-if (set_angle - fb_seesee > 10) {
+/*控制插值*/// 为目标角度插值输出
+if (set_angle - trueAngle > 10) {
         set_angle = interpolate(previous_set_angle, set_angle, interpolation_step);
-    } else if (set_angle - fb_seesee < -10) {
+    } else if (set_angle - trueAngle < -10) {
         set_angle = interpolate(previous_set_angle, set_angle, interpolation_step);
     }
 
-     
+/*PID*/
+      previous_set_angle = set_angle;
+  		position_error = set_angle - trueAngle;
 
-		// LiM6001t the set_angle to the range of -350 to 350 degrees
-    if (set_angle > 340 && fb_seesee > 340) {
-    set_angle = 340;
-    fb_seesee = 340;
-    }
-    else if (set_angle < -340 && fb_seesee < -340) {
-        set_angle = -340;
-			  fb_seesee = -340;
-    }
-
-		previous_set_angle = set_angle;
-		
-		
-//				if(set_angle - fb_seesee> 10)
-//			set_angle =fb_seesee + 10;
-//		else if(set_angle - fb_seesee<-10)
-//			set_angle =fb_seesee - 10;
-//		else 
-//			set_angle = set_angle;
-//		
-//		
-  		position_error = set_angle - fb_seesee;
-				
-
-    // 为下一次迭代更新先前的set_angle
-   
-    
-    // 计算位置控制输出
     float position_output = kp_position * position_error
                           + ki_position * position_integral
                           + kd_position * (position_error - last_position_error);
-    
-    //更新位置积分和最后的错误
+
     position_integral += position_error;
     last_position_error = position_error;
-		
 
-
-    // 计算PWM值(确保在指定范围内)
-    //uint16_t pwm = 0;
-
-    //正向旋转
     if (position_output >= 0) {
         pwm = (uint16_t)position_output;
-        pwm = (pwm > pwm_Z) ? pwm_Z : pwm;  // LiM6001t to 1000       //499
+        pwm = (pwm > pwm_Z) ? pwm_Z : pwm;  // 限幅 最大值550     
     } 
-    // 反向旋转
     else {
         pwm = 65535 - (uint16_t)(-position_output);
-        pwm = (pwm < pwm_F) ? pwm_F : pwm;  // LiM6001t to 64535    64933
+        pwm = (pwm < pwm_F) ? pwm_F : pwm;  // 限幅 最大值64535   
     }
-
+	
+/*CAN指令控制*/
     uint32_t send_mail_box;
     M6001_tx_message.StdId = 0x0e;
     M6001_tx_message.IDE = 0;
@@ -499,54 +473,50 @@ if (set_angle - fb_seesee > 10) {
 //  * @retval         2023/10
 //  */
 void CAN_send_m6001_position_pid_double(int16_t set_angle, int16_t fb_angle,int16_t fb_speed) {
-    // Calculate position error
-/////////////////////////////////////////////////////////////////////////		     
+   // Calculate position error
+///////////////////////////////////////////////////////////////////////		     
 
-		//限制电机运动区间-300~+300
+		//限制电机运动区间-335~+335
+ set_angle = (set_angle > 330) ? 330 : (set_angle < -330) ? -330 : set_angle;
 
-	  // LiM6001t the set_angle to the range of -350 to 350 degrees
-    if (set_angle > 335) {
-        set_angle = 335;
-    } else if (set_angle < -335) {
-        set_angle = -335;
-    }	
+
+/************************过圈计算****************************/// 计算修正后的角度，确保其与目标角度之差在-180到180度之间
+
+		if(lastFbAngle == 1)
+	{
+		lastFbAngle =0;
+		lastFbAngle = fb_angle;
+	}
+	
+	if(fb_angle - lastFbAngle > 180)
+		roundTemp --;
+	else if(fb_angle - lastFbAngle < -180)
+		roundTemp ++;
+	
+	trueAngle = roundTemp*360+fb_angle;
+	
+	lastFbAngle = fb_angle;
 		
-
-/////////////////////////////过圈计算//////////////////////////////////////////////////		
-// 计算修正后的角度，确保其与目标角度之差在-180到180度之间
-
-if (set_angle - fb_angle < -180) {
-    fb_seesee = fb_angle - 360;
-} 
-else {
-    fb_seesee = fb_angle;
-}
-
+		
+/********************速度反馈值处理**********************************************/
 if (fb_speed < 1100) {
-    fb_seespeed = fb_speed;
+    fb_seespeed = fb_speed;//fb_seespeed:0-660
 } 
 else {
-    fb_seespeed = fb_speed-5759;
+    fb_seespeed = fb_speed-5759;//fb_seespeed:0-(-660)
 }
 
-if (set_angle - fb_seesee > 10) {
+/*********************控制插值*******************************/// 为目标角度插值输出
+if (set_angle - trueAngle > 10) {
         set_angle = interpolate(previous_set_angle, set_angle, interpolation_step);
-    } else if (set_angle - fb_seesee < -10) {
+    } else if (set_angle - trueAngle < -10) {
         set_angle = interpolate(previous_set_angle, set_angle, interpolation_step);
     }
-
-/////////////////////////////////////////////////////两个想法，一个是通过对SET当前值与上一个值的插值，一个是设定值与反馈值的插值
+/*********************PID****************************************************/
+      int16_t set_angle_difference = set_angle - previous_set_angle;
       previous_set_angle = set_angle;
-		
-//		
-//				if(set_angle - fb_seesee> 10)
-//			set_angle =fb_seesee + 10;
-//		else if(set_angle - fb_seesee<-10)
-//			set_angle =fb_seesee - 10;
-//		else 
-//			set_angle = set_angle;
 
-  		position_error = set_angle - fb_seesee;
+  		position_error = set_angle - trueAngle;
 
     float position_output = kp_position * position_error
                           + ki_position * position_integral
@@ -555,29 +525,29 @@ if (set_angle - fb_seesee > 10) {
     position_integral += position_error;
     last_position_error = position_error;
 		
-     speed_error = position_error - fb_seespeed;
+      speed_error = position_error - fb_seespeed;//思路：键值的变化范围映射速度，previous_set_angle不好用
 		
 		float speed_output = kp_speed * speed_error
                        + ki_speed * speed_integral
                        + kd_speed * (speed_error - last_speed_error);
 
-    // Update integral and last error for speed
+
     speed_integral += speed_error;
     last_speed_error = speed_error;
 
-    // Combine position and speed outputs
+
     float combined_output = position_output + speed_output;
 		
 		
     if (combined_output >= 0) {
         pwm = (uint16_t)combined_output;
-        pwm = (pwm > pwm_Z) ? pwm_Z : pwm;  // LiM6001t to 1000       //499
+        pwm = (pwm > pwm_Z) ? pwm_Z : pwm;  // 限幅 最大值550 
     } 
     else {
         pwm = 65535 - (uint16_t)(-combined_output);
-        pwm = (pwm < pwm_F) ? pwm_F : pwm;  // LiM6001t to 64535    64933
+        pwm = (pwm < pwm_F) ? pwm_F : pwm;  // 限幅 最大值64535
     }
-
+/**********************CAN*****************************************************/
     uint32_t send_mail_box;
     M6001_tx_message.StdId = 0x0e;
     M6001_tx_message.IDE = 0;

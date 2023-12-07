@@ -87,7 +87,7 @@ float Acceleration_Z;                       //Z轴加速度计
 //float Balance_Kp=300,Balance_Kd=1,Velocity_Kp=80,Velocity_Ki=0.4;//PID参数
 //float Balance_Kp=950,Balance_Kd=-42,Velocity_Kp=240,Velocity_Ki=1.2;//PID参数 Balance_Kp=950,Balance_Kd=-62,Velocity_Kp=300,Velocity_Ki=1.5; //float Balance_Kp=950,Balance_Kd=-42,Velocity_Kp=200,Velocity_Ki=1.0;
 //float Balance_Kp=-0.045,Balance_Kd=0.0045,Velocity_Kp=-0.32,Velocity_Ki=-0.0016; //comment 2023.9.27
-float Balance_Kp=-0.045,Balance_Kd=0.0045,Velocity_Kp=-0.32,Velocity_Ki=-0.0016; //changed 2023.9.27 Balance_Kp=-0.05,Balance_Kd=0.0080,
+float Balance_Kp=-0.038,Balance_Kd=0.0048,Velocity_Kp=-0.17,Velocity_Ki=-0.0016; //changed 2023.9.27 Balance_Kp=-0.05,Balance_Kd=0.0080,
 
 uint16_t PID_Parameter[10],Flash_Parameter[10];  //Flash相关数组	
 float X_x,Y_y,phy,beta,Yaw_Angle=0,Yaw_Anglelast=0,Enc_Dir=0,Target_Velocity=0,Target_vx=0,Target_vy=0,Target_Yaw=0,Target_Wz,i_Gz=0;
@@ -1007,7 +1007,6 @@ static void chassis_balance_control(chassis_move_t *chassis_move_control)
         return;
     }
 
-	 Target_Velocity=Target_vx*myabs(Y_y);
 
 
  Balance_Pwm = balance(Angle_Balance,  Gyro_Balance);//直立PD控制 控制周期5ms  
@@ -1052,11 +1051,16 @@ static void chassis_balance_control(chassis_move_t *chassis_move_control)
 							if(sw_R==2)
 							{
 								 CAN_send_m6001_unlock();
+								Target_Velocity=(Target_vx*myabs(Y_y))/2;
 
 							}
 							if(sw_R==3)
 							{	
-								CAN_send_m6001_unlock();
+//								CAN_send_m6001_position_pid_double(Target_Wz*2, position6001,speed6001);
+								
+								CAN_send_m6001_position_pid(Target_Yaw*2, position6001);
+								
+		            Target_Velocity=(Target_vx*myabs(Y_y));
 								
 							}
 							
@@ -1064,7 +1068,9 @@ static void chassis_balance_control(chassis_move_t *chassis_move_control)
 							{	
 //								CAN_send_m6001_position_pid(Target_Yaw*4, position6001);
 								CAN_send_m6001_position_pid_double(Target_Yaw*4, position6001,speed6001);
+								Target_Velocity=Target_vx*myabs(Y_y)/2;
 							}
+							
 
 		
 
